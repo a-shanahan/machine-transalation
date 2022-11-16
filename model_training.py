@@ -1,6 +1,7 @@
 import os
 import tempfile
-from .model import *
+from model import *
+import tensorflow_text
 
 num_layers = 4  # No. of layers
 d_model = 128  # Dimensionality of embeddings
@@ -85,3 +86,8 @@ transformer.compile(
 transformer.fit(train_batches,
                 epochs=20,
                 validation_data=val_batches)
+
+saved_model_path = 'tf_save'
+translator = Translator(tokenizers, transformer)
+translator = ExportTranslator(translator)
+tf.saved_model.save(translator, export_dir='saved_model_path')

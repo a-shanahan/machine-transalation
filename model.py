@@ -6,6 +6,7 @@ class PositionalEmbedding(tf.keras.layers.Layer):
     """
     PositionEmbedding layer that looks-up a token's embedding vector and adds the position vector
     """
+
     def __init__(self, vocab_size, d_model):
         super().__init__()
         self.d_model = d_model
@@ -53,6 +54,7 @@ class BaseAttention(tf.keras.layers.Layer):
     Attention layers are used throughout the model. These are all identical except for how the attention is configured.
     Each one contains a layers.MultiHeadAttention, a layers.LayerNormalization and a layers.Add.
     """
+
     def __init__(self, **kwargs):
         super().__init__()
         self.mha = tf.keras.layers.MultiHeadAttention(**kwargs)
@@ -67,6 +69,7 @@ class CrossAttention(BaseAttention):
     To implement this you pass the target sequence x as the query and the context sequence as the key/value when
     calling the mha layer:
     """
+
     def call(self, x, context):
         """
 
@@ -98,6 +101,7 @@ class GlobalSelfAttention(BaseAttention):
     To implement this layer you just need to pass the target sequence, x, as both the query, and value
     arguments to the mha layer:
     """
+
     def call(self, x):
         """
 
@@ -124,6 +128,7 @@ class CausalSelfAttention(BaseAttention):
 
     The causal mask ensures that each location only has access to the locations that come before it:
     """
+
     def call(self, x):
         """
 
@@ -148,6 +153,7 @@ class FeedForward(tf.keras.layers.Layer):
     As with the attention layers, the code here also includes the residual connection and normalization.
 
     """
+
     def __init__(self, d_model, dff, dropout_rate=0.1):
         super().__init__()
         self.seq = tf.keras.Sequential([
@@ -169,6 +175,7 @@ class EncoderLayer(tf.keras.layers.Layer):
     The encoder contains a stack of N encoder layers. Where each EncoderLayer contains a GlobalSelfAttention
     and FeedForward layer.
     """
+
     def __init__(self, *, d_model, num_heads, dff, dropout_rate=0.1):
         super().__init__()
 
@@ -191,6 +198,7 @@ class Encoder(tf.keras.layers.Layer):
         - A PositionalEmbedding layer at the input.
         - A stack of EncoderLayer layers.
     """
+
     def __init__(self, *, num_layers, d_model, num_heads,
                  dff, vocab_size, dropout_rate=0.1):
         super().__init__()
@@ -227,6 +235,7 @@ class DecoderLayer(tf.keras.layers.Layer):
     The decoder's stack is slightly more complex, with each DecoderLayer containing a CausalSelfAttention, a
     CrossAttention, and a FeedForward layer:
     """
+
     def __init__(self,
                  *,
                  d_model,
@@ -262,6 +271,7 @@ class Decoder(tf.keras.layers.Layer):
     """
     The Decoder consists of a PositionalEmbedding, and a stack of DecoderLayers.
     """
+
     def __init__(self, *, num_layers, d_model, num_heads, dff, vocab_size,
                  dropout_rate=0.1):
         super(Decoder, self).__init__()
@@ -299,6 +309,7 @@ class Transformer(tf.keras.Model):
     Put Encoder and Decoder together and add a final linear (Dense) layer which converts the resulting vector at
     each location into output token probabilities.
     """
+
     def __init__(self, *, num_layers, d_model, num_heads, dff,
                  input_vocab_size, target_vocab_size, dropout_rate=0.1):
         super().__init__()
@@ -335,3 +346,86 @@ class Transformer(tf.keras.Model):
 
         # Return the final output and the attention weights.
         return logits
+
+
+class Translator(tf.Module):
+    """
+    Test the model by performing a translation. The following steps are used for inference:
+
+        - Encode the input sentence using the Portuguese tokenizer (tokenizers.pt). This is the encoder input.
+        - The decoder input is initialized to the [START] token.
+        - Calculate the padding masks and the look ahead masks.
+        - The decoder then outputs the predictions by looking at the encoder output and its own output (self-attention).
+        - Concatenate the predicted token to the decoder input and pass it to the decoder.
+        - In this approach, the decoder predicts the next token based on the previous tokens it predicted.
+
+    """
+    def __init__(self, tokenizers, transformer, max_tokens=128):
+        self.tokenizers = tokenizers
+        self.transformer = transformer
+        self.max_length = max_tokens
+
+    def __call__(self, sentence):
+        # The input sentence is Portuguese, hence adding the `[START]` and `[END]` tokens.
+        assert isinstance(sentence, tf.Tensor)
+        if len(sentence.shape) == 0:
+            sentence = sentence[tf.newaxis]
+
+        sentence = self.tokenizers.pt.tokenize(sentence).to_tensor()
+
+        encoder_input = sentence
+
+        # As the output language is English, initialize the output with the
+        # English `[START]` token.
+        start_end = self.tokenizers.en.tokenize([''])[0]
+        start = start_end[0][tf.newaxis]
+        end = start_end[1][tf.newaxis]
+
+        # `tf.TensorArray` is required here (instead of a Python list), so that the
+        # dynamic-loop can be traced by `tf.function`.
+        output_array = tf.TensorArray(dtype=tf.int64, size=0, dynamic_size=True)
+        output_array = output_array.write(0, start)
+
+        for i in tf.range(self.max_length):
+            output = tf.transpose(output_array.stack())
+            predictions = self.transformer([encoder_input, output], training=False)
+
+            # Select the last token from the `seq_len` dimension.
+            predictions = predictions[:, -1:, :]  # Shape `(batch_size, 1, vocab_size)`.
+
+            predicted_id = tf.argmax(predictions, axis=-1)
+
+            # Concatenate the `predicted_id` to the output which is given to the
+            # decoder as its input.
+            output_array = output_array.write(i + 1, predicted_id[0])
+
+            if predicted_id == end:
+                break
+
+        output = tf.transpose(output_array.stack())
+        # The output shape is `(1, tokens)`.
+        text = self.tokenizers.en.detokenize(output)[0]  # Shape: `()`.
+
+        tokens = self.tokenizers.en.lookup(output)[0]
+
+        # `tf.function` prevents us from using the attention_weights that were
+        # calculated on the last iteration of the loop.
+        # So, recalculate them outside the loop.
+        self.transformer([encoder_input, output[:, :-1]], training=False)
+        attention_weights = self.transformer.decoder.last_attn_scores
+
+        return text, tokens, attention_weights
+
+
+class ExportTranslator(tf.Module):
+    def __init__(self, translator, max_tokens=128):
+        self.translator = translator
+        self.max_tokens = max_tokens
+
+    @tf.function(input_signature=[tf.TensorSpec(shape=[], dtype=tf.string)])
+    def __call__(self, sentence):
+        (result,
+         tokens,
+         attention_weights) = self.translator(sentence, max_length=self.MAX_TOKENS)
+
+        return result
