@@ -426,6 +426,6 @@ class ExportTranslator(tf.Module):
     def __call__(self, sentence):
         (result,
          tokens,
-         attention_weights) = self.translator(sentence, max_length=self.MAX_TOKENS)
+         attention_weights) = self.translator(sentence, max_length=self.max_tokens)
 
         return result
