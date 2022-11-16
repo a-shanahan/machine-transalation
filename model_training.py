@@ -91,3 +91,8 @@ saved_model_path = 'tf_save'
 translator = Translator(tokenizers, transformer)
 translator = ExportTranslator(translator)
 tf.saved_model.save(translator, export_dir='saved_model_path')
+
+# To use for inference:
+# reloaded = tf.saved_model.load('tf_save')
+# reloaded('este é o primeiro livro que eu fiz.').numpy()
+# b'this is the first book i did .'
