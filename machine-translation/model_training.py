@@ -84,7 +84,7 @@ transformer.compile(
     metrics=[masked_accuracy])
 
 transformer.fit(train_batches,
-                epochs=20,
+                epochs=2,
                 validation_data=val_batches)
 
 saved_model_path = 'tf_save'

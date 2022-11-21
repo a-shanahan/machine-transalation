@@ -2,6 +2,7 @@ import os
 import tempfile
 from model import *
 import tensorflow_text
+from tensorflow.keras.callbacks import Callback
 
 num_layers = 4  # No. of layers
 d_model = 128  # Dimensionality of embeddings
@@ -9,40 +10,14 @@ dff = 512  # Dimensionality of feed forward network
 num_heads = 8  # No. of attention heads
 dropout_rate = 0.1
 
-model_name = 'ted_hrlr_translate_pt_en_converter'
-tokenizers = tf.saved_model.load(model_name)
-
-train_path = os.path.join(tempfile.gettempdir(), "saved_train_data")
-val_path = os.path.join(tempfile.gettempdir(), "saved_val_data")
-
-train_batches = tf.data.Dataset.load(train_path)
-val_batches = tf.data.Dataset.load(val_path)
-
-transformer = Transformer(
+transformer = imdbBERT(
     num_layers=num_layers,
     d_model=d_model,
     num_heads=num_heads,
     dff=dff,
-    input_vocab_size=tokenizers.pt.get_vocab_size().numpy(),
-    target_vocab_size=tokenizers.en.get_vocab_size().numpy(),
+    input_vocab_size=len(imdb_vocab),
+    target_vocab_size=len(imdb_vocab),
     dropout_rate=dropout_rate)
-
-
-class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
-    def __init__(self, d_model, warmup_steps=4000):
-        super().__init__()
-
-        self.d_model = d_model
-        self.d_model = tf.cast(self.d_model, tf.float32)
-
-        self.warmup_steps = warmup_steps
-
-    def __call__(self, step):
-        step = tf.cast(step, dtype=tf.float32)
-        arg1 = tf.math.rsqrt(step)
-        arg2 = step * (self.warmup_steps ** -1.5)
-
-        return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
 
 
 learning_rate = CustomSchedule(d_model)
@@ -83,16 +58,62 @@ transformer.compile(
     optimizer=optimizer,
     metrics=[masked_accuracy])
 
-transformer.fit(train_batches,
-                epochs=20,
-                validation_data=val_batches)
 
-saved_model_path = 'tf_save'
-translator = Translator(tokenizers, transformer)
-translator = ExportTranslator(translator)
-tf.saved_model.save(translator, export_dir='saved_model_path')
+sample_tokens = tokenizer.tokenize(["watched this film and it was awesome"])
 
-# To use for inference:
-# reloaded = tf.saved_model.load('tf_save')
-# reloaded('este é o primeiro livro que eu fiz.').numpy()
-# b'this is the first book i did .'
+selected = random_selector.get_selection_mask(
+    sample_tokens, axis=1)
+
+masked_token_ids, masked_pos, masked_lm_ids = text.mask_language_model(
+  sample_tokens,
+  item_selector=random_selector, mask_values_chooser=mask_values_chooser)
+
+sample_tokens = masked_token_ids.to_tensor()
+
+
+from tensorflow.keras.callbacks import Callback
+
+
+class MaskedTextGenerator(Callback):
+    def __init__(self, sample_tokens, top_k=5):
+        print('Generator __init__')
+        self.sample_tokens = sample_tokens
+        self.k = top_k
+        self.mask_token_id = 2
+
+    def decode(self, tokens):
+        return " ".join([id2token[t] for t in tokens if t != 0])
+
+    def convert_ids_to_tokens(self, id):
+        return id2token[id]
+
+    def on_epoch_end(self, epoch, logs=None):
+        prediction = self.model.predict(self.sample_tokens)
+
+        masked_index = np.where(self.sample_tokens == self.mask_token_id)
+        masked_index = masked_index[1]
+        mask_prediction = prediction[0][masked_index]
+
+        top_indices = mask_prediction[0].argsort()[-self.k :][::-1]
+        values = mask_prediction[0][top_indices]
+
+        for i in range(len(top_indices)):
+            p = top_indices[i]
+            v = values[i]
+            tokens = np.copy(sample_tokens[0])
+            tokens[masked_index[0]] = p
+            result = {
+                "input_text": self.decode(sample_tokens[0].numpy()),
+                "prediction": self.decode(tokens),
+                "probability": v,
+                "predicted mask token": self.convert_ids_to_tokens(p),
+            }
+            print(result)
+
+generator_callback = MaskedTextGenerator(sample_tokens)
+generator_callback.sample_tokens
+
+transformer.fit(dataset,
+                epochs=5,
+                callbacks=[generator_callback])
+

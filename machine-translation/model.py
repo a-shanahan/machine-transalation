@@ -360,10 +360,10 @@ class Translator(tf.Module):
         - In this approach, the decoder predicts the next token based on the previous tokens it predicted.
 
     """
-    def __init__(self, tokenizers, transformer, max_tokens=128):
+    def __init__(self, tokenizers, transformer, max_length):
         self.tokenizers = tokenizers
         self.transformer = transformer
-        self.max_length = max_tokens
+        self.max_length = max_length
 
     def __call__(self, sentence):
         # The input sentence is Portuguese, hence adding the `[START]` and `[END]` tokens.
