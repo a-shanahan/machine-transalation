@@ -6,21 +6,27 @@ import tensorflow_datasets as tfds
 import tensorflow as tf
 import tensorflow_text as text
 import functools
+from dataclasses import dataclass
 from tensorflow_text.tools.wordpiece_vocab import bert_vocab_from_dataset as bert_vocab
 
 import glob
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import re
+from tokeniser_utils import *
 
 
+config = Config()
+
+train_dataset = load_tf_data('train_data')
+test_dataset = load_tf_data('test_data')
 
 bert_tokenizer_params = dict(lower_case=True)
-reserved_tokens = ["[PAD]", "[UNK]", "[START]", "[END]", "[MASK]", "[RANDOM]", "[CLS]", "[SEP]"]
+reserved_tokens = ["[PAD]", "[UNK]", "[MASK]", "[CLS]", "[SEP]"]
 
 bert_vocab_args = dict(
     # The target vocabulary size
-    vocab_size=8000,
+    vocab_size=config.VOCAB_SIZE,
     # Reserved tokens that must be included in the vocabulary
     reserved_tokens=reserved_tokens,
     # Arguments for `text.BertTokenizer`
@@ -29,9 +35,9 @@ bert_vocab_args = dict(
     learn_params={},
 )
 
-#  Takes about 5 mins
+#  Takes about 13 mins
 imdb_vocab = bert_vocab.bert_vocab_from_dataset(
-    dataset,
+    train_dataset,
     **bert_vocab_args
 )
 
@@ -50,91 +56,17 @@ _START_TOKEN = imdb_vocab.index("[CLS]")
 _END_TOKEN = imdb_vocab.index("[SEP]")
 _MASK_TOKEN = imdb_vocab.index("[MASK]")
 _UNK_TOKEN = imdb_vocab.index("[UNK]")
-_MAX_SEQ_LEN = 10
-_MAX_PREDICTIONS_PER_BATCH = 5
 
-_VOCAB_SIZE = len(imdb_vocab)
+trimmer = text.RoundRobinTrimmer(max_seq_length=config.MAX_SEQ_LEN)
 
+random_selector = text.RandomItemSelector(
+    max_selections_per_batch=config.MAX_PREDICTIONS_PER_BATCH,
+    selection_rate=0.2,
+    unselectable_ids=[_START_TOKEN, _END_TOKEN, _UNK_TOKEN]
+)
 
-@tf.function
-def bert_pretrain_preprocess(vocab_table, features):
-    # Input is a string Tensor of documents, shape [batch, 1].
-    text_a = features
+mask_values_chooser = text.MaskValuesChooser(config.VOCAB_SIZE, _MASK_TOKEN, 0.8)
 
-    # Tokenize segments to shape [num_sentences, (num_words)] each.
-    tokenizer = text.BertTokenizer(
-        vocab_table,
-        token_out_type=tf.int64)
-
-    segments = tokenizer.tokenize(text_a).merge_dims(1, -1)
-
-    # Truncate inputs to a maximum length.
-    trimmer = text.RoundRobinTrimmer(max_seq_length=6)
-    trimmed_segments = trimmer.trim([segments])
-
-    # Combine segments, get segment ids and add special tokens.
-    segments_combined, segment_ids = text.combine_segments(
-        trimmed_segments,
-        start_of_sequence_id=_START_TOKEN,
-        end_of_segment_id=_END_TOKEN)
-
-    # Apply dynamic masking task.
-    masked_input_ids, masked_lm_positions, masked_lm_ids = (
-        text.mask_language_model(
-            segments_combined,
-            random_selector,
-            mask_values_chooser,
-        )
-    )
-
-    padded_inputs, _ = text.pad_model_inputs(
-        segments_combined, max_seq_length=_MAX_SEQ_LEN)
-
-    # Prepare and pad combined segment inputs
-    input_word_ids, input_mask = text.pad_model_inputs(
-        masked_input_ids, max_seq_length=_MAX_SEQ_LEN)
-
-    input_type_ids, _ = text.pad_model_inputs(
-        segment_ids, max_seq_length=_MAX_SEQ_LEN)
-
-    # # Prepare and pad masking task inputs
-    # masked_lm_positions, masked_lm_weights = text.pad_model_inputs(
-    #     masked_lm_positions, max_seq_length=_MAX_PREDICTIONS_PER_BATCH)
-
-    masked_lm_ids, _ = text.pad_model_inputs(
-        masked_lm_ids, max_seq_length=_MAX_PREDICTIONS_PER_BATCH)
-
-    # model_inputs = {
-    #     "segment_ids": padded_inputs,
-    #     "input_word_ids": input_word_ids,
-    #     "input_mask": input_mask,
-    #     "input_type_ids": input_type_ids,
-    #     "masked_lm_ids": masked_lm_ids,
-    #     "masked_lm_positions": masked_lm_positions,
-    #     "masked_lm_weights": masked_lm_weights,
-    # }
-    return padded_inputs, input_word_ids
-
-
-def make_batches(ds, lk_up, BUFFER_SIZE: int = 20000, BATCH_SIZE: int = 64):
-    """
-    It tokenizes the text, and filters out the sequences that are too long. (The batch/unbatch is included because the
-    tokenizer is much more efficient on large batches). The cache method ensures that that work is only executed once.
-    Then shuffle and, dense_to_ragged_batch randomize the order and assemble batches of examples. Finally, prefetch runs
-    the dataset in parallel with the model to ensure that data is available when needed. See Better performance with the
-    tf.data for details.
-    :param ds: Tensorflow dataset
-    :param BUFFER_SIZE: Size of buffer (randomly samples elements from buffer)
-    :param BATCH_SIZE: No. of elements within a batch
-    :return:
-    """
-    return (
-        ds
-        .shuffle(BUFFER_SIZE)
-        .batch(BATCH_SIZE)
-        .map(functools.partial(bert_pretrain_preprocess, lookup_table))
-        .prefetch(buffer_size=tf.data.AUTOTUNE))
-
-
-dataset = make_batches(tf.data.Dataset.from_tensor_slices(all_data['review_cln']), lookup_table)
+train_dataset_masked = make_batches(train_dataset, lookup_table)
+test_dataset_masked = make_batches(test_dataset, lookup_table)
 
