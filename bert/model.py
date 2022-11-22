@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+from tensorflow.keras.callbacks import Callback
 
 
 class PositionalEmbedding(tf.keras.layers.Layer):
@@ -256,7 +257,7 @@ def masked_accuracy(label, pred):
 class MaskedTextGenerator(Callback):
     def __init__(self, sample_tokens, vocab, top_k=5):
         self.id2token = dict(enumerate(vocab))
-        self.token2id = {y: x for x, y in id2token.items()}
+        self.token2id = {y: x for x, y in self.id2token.items()}
         self.sample_tokens = sample_tokens
         self.k = top_k
         self.mask_token_id = self.token2id.get('[MASK]')
