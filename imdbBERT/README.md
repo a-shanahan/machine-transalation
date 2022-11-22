@@ -44,3 +44,15 @@ On the completion of each callback, the model outputs predicted tokens for the e
 
 *I watched this **[MASK]** and it was awesome*
 
+Example output during training process:
+
+```commandline
+Epoch 10/10
+1/1 [==============================] - 0s 23ms/step
+{'input_text': 'i have watched this [MASK] and it was awesome', 'prediction': 'i have watched this movie and it was awesome', 'probability': 7.254052, 'predicted mask token': 'movie'}
+{'input_text': 'i have watched this [MASK] and it was awesome', 'prediction': 'i have watched this saw and it was awesome', 'probability': 6.222549, 'predicted mask token': 'saw'}
+{'input_text': 'i have watched this [MASK] and it was awesome', 'prediction': 'i have watched this i and it was awesome', 'probability': 5.614587, 'predicted mask token': 'i'}
+{'input_text': 'i have watched this [MASK] and it was awesome', 'prediction': 'i have watched this really and it was awesome', 'probability': 5.174042, 'predicted mask token': 'really'}
+{'input_text': 'i have watched this [MASK] and it was awesome', 'prediction': 'i have watched this a and it was awesome', 'probability': 5.1586485, 'predicted mask token': 'a'}
+524/524 [==============================] - 453s 865ms/step - loss: 0.1523 - masked_accuracy: 0.9771 - val_loss: 0.2180 - val_masked_accuracy: 0.9754
+```
