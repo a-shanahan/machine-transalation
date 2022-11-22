@@ -63,7 +63,6 @@ class BaseAttention(tf.keras.layers.Layer):
         self.last_attn_scores = None
 
 
-
 class GlobalSelfAttention(BaseAttention):
     """
     This layer is responsible for processing the context sequence, and propagating information along its length.
@@ -87,7 +86,6 @@ class GlobalSelfAttention(BaseAttention):
         x = self.add([x, attn_output])
         x = self.layernorm(x)
         return x
-
 
 
 class FeedForward(tf.keras.layers.Layer):
@@ -189,9 +187,7 @@ class imdbBERT(tf.keras.Model):
                                vocab_size=input_vocab_size,
                                dropout_rate=dropout_rate)
 
-
         self.final_layer = tf.keras.layers.Dense(target_vocab_size)
-
 
     @tf.function
     def call(self, inputs):
@@ -228,3 +224,68 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         arg2 = step * (self.warmup_steps ** -1.5)
 
         return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
+
+
+def masked_loss(label, pred):
+    mask = label != 0
+    loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
+        from_logits=True, reduction='none')
+    loss = loss_object(label, pred)
+
+    mask = tf.cast(mask, dtype=loss.dtype)
+    loss *= mask
+
+    loss = tf.reduce_sum(loss) / tf.reduce_sum(mask)
+    return loss
+
+
+def masked_accuracy(label, pred):
+    pred = tf.argmax(pred, axis=2)
+    label = tf.cast(label, pred.dtype)
+    match = label == pred
+
+    mask = label != 0
+
+    match = match & mask
+
+    match = tf.cast(match, dtype=tf.float32)
+    mask = tf.cast(mask, dtype=tf.float32)
+    return tf.reduce_sum(match) / tf.reduce_sum(mask)
+
+
+class MaskedTextGenerator(Callback):
+    def __init__(self, sample_tokens, vocab, top_k=5):
+        self.id2token = dict(enumerate(vocab))
+        self.token2id = {y: x for x, y in id2token.items()}
+        self.sample_tokens = sample_tokens
+        self.k = top_k
+        self.mask_token_id = self.token2id.get('[MASK]')
+
+    def decode(self, tokens):
+        return " ".join([self.id2token[t] for t in tokens if t != 0])
+
+    def convert_ids_to_tokens(self, id):
+        return self.id2token[id]
+
+    def on_epoch_end(self, epoch, logs=None):
+        prediction = self.model.predict(self.sample_tokens)
+
+        masked_index = np.where(self.sample_tokens == self.mask_token_id)
+        masked_index = masked_index[1]
+        mask_prediction = prediction[0][masked_index]
+
+        top_indices = mask_prediction[0].argsort()[-self.k:][::-1]
+        values = mask_prediction[0][top_indices]
+
+        for i in range(len(top_indices)):
+            p = top_indices[i]
+            v = values[i]
+            tokens = np.copy(self.sample_tokens[0])
+            tokens[masked_index[0]] = p
+            result = {
+                "input_text": self.decode(self.sample_tokens[0].numpy()),
+                "prediction": self.decode(tokens),
+                "probability": v,
+                "predicted mask token": self.convert_ids_to_tokens(p),
+            }
+            print(result)

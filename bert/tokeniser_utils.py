@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import tensorflow as tf
 import tensorflow_text as text
 
