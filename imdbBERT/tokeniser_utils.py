@@ -10,7 +10,13 @@ with open('imdb_vocab.txt', 'r') as f:
 
 @dataclass
 class Config:
-    def __init__(self, vocab):
+    def __init__(self):
+        self.START_TOKEN = None
+        self.END_TOKEN = None
+        self.MASK_TOKEN = None
+        self.UNK_TOKEN = None
+
+    def load_vocab(self, vocab):
         self.START_TOKEN = vocab.index("[CLS]")
         self.END_TOKEN = vocab.index("[SEP]")
         self.MASK_TOKEN = vocab.index("[MASK]")
@@ -25,6 +31,10 @@ class Config:
     FF_DIM = 512  # Dimensionality of feed forward network
     NUM_LAYERS = 4  # No. of layers
     DROPOUT = 0.1
+
+
+config = Config()
+config.load_vocab(imdb_vocab)
 
 
 config = Config(imdb_vocab)

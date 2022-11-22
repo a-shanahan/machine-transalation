@@ -49,7 +49,7 @@ def cln_text(text: str) -> bytes:
     lowercase = tf.strings.lower(text)
     stripped_html = tf.strings.regex_replace(lowercase, "<br />", " ")
     return tf.strings.regex_replace(
-        stripped_html, "[%s]" % re.escape("!#$%&'()*+-/:;<=>?@\^_`{|}~"), "").numpy()
+        stripped_html, "[%s]" % re.escape("!#$%&'()*+-/:;<=>?@\^_`{|}~.,"), "").numpy()
 
 
 def save_tf_data(tf_data: tf.data.Dataset, dir_name: str) -> None:
